@@ -387,33 +387,6 @@ export const RankingSettings = memo(() => {
             {/* --- 2. 既存ランキング一覧 --- */}
             <CustomRankingDisplay ranking={customRanking} />
           </section>
-
-          {/* --- 3. 自動更新ルール説明 --- */}
-          <footer className="mt-8 p-6 bg-blue-50 border-l-4 border-blue-400 rounded-lg">
-            <h3 className="text-xl font-semibold text-blue-800 mb-3 flex items-center">
-              <Clock className="w-5 h-5 mr-2" />
-              ランキングの更新ルール
-            </h3>
-            <ul className="list-disc list-inside text-sm text-blue-700 space-y-2">
-              <li>
-                ランキングの作成:
-                上のフォームから集計期間とクラスを設定し、「集計する」ボタンを押すことでランキングが即座に作成・上書きされます。
-              </li>
-              <li>
-                期間内の自動更新:
-                作成されたランキングが期間内に含まれている場合、毎日 0:00 (JST)
-                に自動で再集計・更新されます。
-              </li>
-              <li>
-                期間終了後の保持:
-                集計期間が過ぎると、ランキングはそれ以上自動更新されず、教師が手動で更新（再集計）するまで、そのランキングが公開され続けます。
-              </li>
-              <li>
-                対象生徒: ランキングは選択したクラスの生徒全員（1位〜
-                {STUDENT_COUNT}位）で構成されます。
-              </li>
-            </ul>
-          </footer>
         </div>
       </div>
     </TeacherLayout>
