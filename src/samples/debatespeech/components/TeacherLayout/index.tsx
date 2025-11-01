@@ -9,6 +9,7 @@ import {
   ChevronRight,
   LogOut,
   LayoutDashboard,
+  Trophy,
 } from 'lucide-react';
 import { ReactNode, useState } from 'react';
 
@@ -37,7 +38,7 @@ const navigationItems = [
   },
   {
     label: 'ランキング設定',
-    icon: Settings,
+    icon: Trophy,
   },
 ];
 
