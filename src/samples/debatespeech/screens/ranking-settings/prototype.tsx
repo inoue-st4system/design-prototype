@@ -1,3 +1,6 @@
+/* eslint-disable react-hooks/rules-of-hooks */
+/* eslint-disable no-nested-ternary */
+/* eslint-disable no-console */
 /* eslint-disable jsx-a11y/no-static-element-interactions */
 /* eslint-disable jsx-a11y/click-events-have-key-events */
 /* eslint-disable no-plusplus */
@@ -12,53 +15,50 @@ import {
   Clock,
   Users,
   ArrowRight,
-  TrendingUp,
   Trash2,
+  TrendingUp,
 } from 'lucide-react';
-import React, { useState, FC, memo, useCallback } from 'react';
+import React, { useState, FC, memo, useCallback, useMemo } from 'react';
 
+// TeacherLayoutのインポートはコメントアウトしていますが、Canvas環境で動作させるために仮の型を定義します。
 import { TeacherLayout } from '@/samples/debatespeech/components/TeacherLayout';
 
 // === 型定義 ===
+/** 生徒一人当たりのランキングデータ */
 interface RankingStudentData {
   rank: number;
   name: string;
-  score: number;
+  nickname: string; // ニックネーム
+  score: number; // Logic Training のポイント
+  maxScore: number; // Debate の最高スコア
   class: string;
+  grade: number;
 }
 
+/** ランキングの種別 (表示用フィルタ) */
+type RankingType = 'logic' | 'debate';
+
+/** 作成されたランキング全体の設定データ */
 interface RankingData {
   id: string; // ランキングを一意に識別するID
   title: string;
   period: string; // 例: 'YYYY-MM-DD〜YYYY-MM-DD'
-  target: string; // クラス名
-  lastUpdated: string; // 例: '2025/10/28 00:00 JST'
+  target: string; // クラス名 ('全校生徒' または特定のクラス名)
   rankingData: RankingStudentData[];
+  // isAutomaticがtrueの場合のみtypeを使用する想定
+  type?: RankingType;
+  isAutomatic: boolean; // true: Weekly/Monthly, false: Custom
+}
+
+/** SegmentedControlのタブアイテムの型 */
+interface TabItem {
+  id: RankingType;
+  label: string;
 }
 
 // === データモック ===
-const MOCK_CLASSES: string[] = ['1年A組', '1年B組', '2年A組', '3年C組'];
+const MOCK_CLASSES: string[] = ['1年A組', '1年B組', '2年A組', '2年C組'];
 const STUDENT_COUNT = 200; // 全生徒数（クラスのメンバー数として利用）
-
-// 生徒データ生成関数（200名）
-const generateMockStudents = (
-  className: string,
-  count: number = STUDENT_COUNT,
-): RankingStudentData[] => {
-  const students: RankingStudentData[] = [];
-  for (let i = 0; i < count; i++) {
-    students.push({
-      rank: i + 1,
-      name: `生徒 ${String(i + 1).padStart(3, '0')}号`,
-      score: Math.floor(Math.random() * 5000) + 1000,
-      class: className,
-    });
-  }
-  // スコアでソートし、ランキングを再割り当て
-  students.sort((a, b) => b.score - a.score);
-  students.forEach((s, index) => (s.rank = index + 1));
-  return students;
-};
 
 // 日付ヘルパー
 const today: Date = new Date();
@@ -77,45 +77,116 @@ const dateAfterDays = (date: Date, days: number): Date => {
   return newDate;
 };
 
-// === 初期ダミーデータ (既に作成されたランキングを想定) ===
-const initialRankings: RankingData[] = [
+/**
+ * 今週の集計期間（月曜〜日曜）を計算する
+ * @returns { period: string, start: Date, end: Date }
+ */
+const getWeeklyPeriod = () => {
+  const currentDayOfWeek = today.getDay(); // 0:日, 1:月, ..., 6:土
+  const daysSinceMonday = currentDayOfWeek === 0 ? 6 : currentDayOfWeek - 1;
+
+  const startOfWeek = dateAfterDays(today, -daysSinceMonday);
+  const endOfWeek = dateAfterDays(startOfWeek, 6);
+
+  return {
+    period: `${formatDate(startOfWeek)}〜${formatDate(endOfWeek)}`,
+    start: startOfWeek,
+    end: endOfWeek,
+  };
+};
+
+/**
+ * 今月の集計期間（1日〜月末）を計算する
+ * @returns { period: string, start: Date, end: Date }
+ */
+const getMonthlyPeriod = () => {
+  const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+  const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+
+  return {
+    period: `${formatDate(startOfMonth)}〜${formatDate(endOfMonth)}`,
+    start: startOfMonth,
+    end: endOfMonth,
+  };
+};
+
+// 生徒データ生成関数（200名）
+const generateMockStudents = (
+  className: string,
+  count: number = STUDENT_COUNT,
+): RankingStudentData[] => {
+  const students: RankingStudentData[] = [];
+  for (let i = 0; i < count; i++) {
+    const score = Math.floor(Math.random() * 5000) + 1000;
+    const maxScore = Math.floor(Math.random() * 100) + 70; // 70-170点の範囲
+    students.push({
+      rank: i + 1, // 初期ランクは適当
+      name: `生徒 ${String(i + 1).padStart(3, '0')}号`,
+      nickname: `Nemo${String(i + 1).padStart(3, '0')}`,
+      score, // Logic Training Point
+      maxScore, // Debate Max Score
+      class: className,
+      grade: 1,
+    });
+  }
+  // Logic Training Scoreでソート
+  students.sort((a, b) => b.score - a.score);
+  students.forEach((s, index) => (s.rank = index + 1));
+  return students;
+};
+
+// === 初期ダミーデータ (カスタム期間として修正) ===
+const initialRankings: Omit<RankingData, 'type' | 'isAutomatic'>[] = [
   {
-    id: '1A-current',
+    id: '1A-initial', // IDを修正
     title: '1年A組 ランキング',
-    period: `${formatDate(today)}〜${formatDate(dateAfterDays(today, 13))}`, // 期間内
+    period: `${formatDate(today)}〜${formatDate(dateAfterDays(today, 6))}`, // 7日間
     target: '1年A組',
-    lastUpdated: `${new Date().toLocaleString('ja-JP', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-    })} JST`,
     rankingData: generateMockStudents('1年A組', STUDENT_COUNT),
   },
   {
-    id: '1B-expired',
+    id: '1B-initial', // IDを修正
     title: '1年B組 ランキング',
     period: '2025-09-01〜2025-09-30', // 期間終了
     target: '1年B組',
-    lastUpdated: '2025/09/30 00:00 JST',
     rankingData: generateMockStudents('1年B組', STUDENT_COUNT),
   },
-  {
-    id: '2A-current',
-    title: '2年A組 ランキング',
-    period: `${formatDate(today)}〜${formatDate(dateAfterDays(today, 6))}`, // 期間内
-    target: '2年A組',
-    lastUpdated: `${new Date().toLocaleString('ja-JP', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-    })} JST`,
-    rankingData: generateMockStudents('2年A組', STUDENT_COUNT),
-  },
 ];
+
+// === SegmentedControlコンポーネント ===
+
+const SegmentedControl: FC<{
+  tabs: TabItem[];
+  activeTab: string;
+  onTabChange: (tabId: string) => void;
+}> = memo(({ tabs, activeTab, onTabChange }) => {
+  const baseClasses = 'bg-white border border-gray-200 text-gray-700 shadow-sm';
+  const activeClasses = 'bg-slate-800 text-white font-semibold shadow-md';
+  const hoverClasses = 'hover:bg-gray-100';
+  const inactiveTextClasses = 'text-gray-700';
+
+  return (
+    <div className={`flex items-center rounded-lg p-1 ${baseClasses}`}>
+      {tabs.map((tab) => (
+        <button
+          key={tab.id}
+          // SegmentedControlの利用箇所が複数あるため、tabIdはstringのままにして、利用側で型をキャストする
+          onClick={() => onTabChange(tab.id)}
+          className={`
+            px-4 py-2 rounded-md transition-colors duration-200 text-sm whitespace-nowrap
+            ${
+              activeTab === tab.id
+                ? activeClasses
+                : `${hoverClasses} ${inactiveTextClasses}`
+            }
+          `}
+        >
+          {tab.label}
+        </button>
+      ))}
+    </div>
+  );
+});
 
 // === コンポーネント: ランキング設定フォーム (上部左側) ===
 interface CustomRankingFormProps {
@@ -124,40 +195,44 @@ interface CustomRankingFormProps {
 
 const CustomRankingForm: FC<CustomRankingFormProps> = memo(
   ({ addOrUpdateRanking }) => {
+    // 画面を開いたときにデフォルトで本日〜7日間が設定されている挙動
     const [startDate, setStartDate] = useState<string>(formatDate(today));
     const [endDate, setEndDate] = useState<string>(
       formatDate(dateAfterDays(today, 6)),
-    ); // 7日間
+    );
     const [selectedClass, setSelectedClass] = useState<string>(MOCK_CLASSES[0]);
+
+    // **要件変更: カスタムランキング作成時に種別は選択しない**
     const [isLoading, setIsLoading] = useState<boolean>(false);
 
     // プリセット期間を設定するハンドラ
-    const setPreset = useCallback((days: number) => {
-      // daysは期間の日数。endDateは days - 1 日後となる
-      const newEndDate: Date = dateAfterDays(today, days - 1);
-      setStartDate(formatDate(today));
-      setEndDate(formatDate(newEndDate));
-    }, []);
+    // ユーザーが設定した開始日を基準に終了日を設定する
+    const setPreset = useCallback(
+      (days: number) => {
+        // startDateはユーザーが入力した値、それをDateオブジェクトに変換
+        const baseDate: Date = new Date(startDate);
+        // daysは期間の日数。endDateは days - 1 日後となる
+        const newEndDate: Date = dateAfterDays(baseDate, days - 1);
+        setEndDate(formatDate(newEndDate));
+      },
+      [startDate],
+    );
 
     const handleSubmit = (e: React.FormEvent) => {
       e.preventDefault();
       setIsLoading(true);
 
-      const rankingId = `${selectedClass}-${Date.now()}`; // IDは作成時刻でユニークにする
+      const rankingId = `${selectedClass}-custom-${Date.now()}`;
 
       const newRanking: RankingData = {
         id: rankingId,
+        // **タイトル修正:** 【カスタム】X年X組 ランキング
         title: `${selectedClass} ランキング`,
         period: `${startDate}〜${endDate}`,
         target: selectedClass,
-        lastUpdated: `${new Date().toLocaleString('ja-JP', {
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit',
-          hour: '2-digit',
-          minute: '2-digit',
-        })} JST`,
         rankingData: generateMockStudents(selectedClass, STUDENT_COUNT), // 200名生成
+        isAutomatic: false, // カスタム期間
+        // type: undefined (カスタムランキングには型を持たせない)
       };
 
       setTimeout(() => {
@@ -171,7 +246,7 @@ const CustomRankingForm: FC<CustomRankingFormProps> = memo(
       <div className="bg-white p-6 rounded-xl shadow-lg border border-slate-100 h-full">
         <h3 className="text-xl font-bold text-slate-700 mb-4 flex items-center">
           <Calendar className="w-5 h-5 mr-2 text-slate-800" />
-          カスタムランキングの作成・更新
+          カスタム期間ランキングの作成・更新
         </h3>
         <form onSubmit={handleSubmit} className="space-y-4">
           {/* 期間設定 (プリセット & 自由入力) */}
@@ -179,39 +254,12 @@ const CustomRankingForm: FC<CustomRankingFormProps> = memo(
             <label className="block text-sm font-medium text-gray-700">
               集計期間を設定 (最長1年)
             </label>
-            <div className="flex space-x-2 mb-2 flex-wrap gap-y-2">
-              <button
-                type="button"
-                onClick={() => setPreset(7)}
-                // 修正: slate-50 -> slate-100/slate-800へ変更
-                className="px-3 py-1 text-sm rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 transition"
-              >
-                1週間 (本日から)
-              </button>
-              <button
-                type="button"
-                onClick={() => setPreset(30)}
-                // 修正: slate-50 -> slate-100/slate-800へ変更
-                className="px-3 py-1 text-sm rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 transition"
-              >
-                1か月 (本日から)
-              </button>
-              <button
-                type="button"
-                onClick={() => setPreset(90)}
-                // 修正: slate-50 -> slate-100/slate-800へ変更
-                className="px-3 py-1 text-sm rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 transition"
-              >
-                3か月 (本日から)
-              </button>
-            </div>
-            <div className="flex items-center space-x-3">
+            <div className="flex items-center space-x-3 mb-2">
               <input
                 type="date"
                 value={startDate}
                 onChange={(e) => setStartDate(e.target.value)}
                 required
-                // 修正: focus:ring-slate-500 -> focus:ring-slate-800
                 className="flex-1 p-2 border border-gray-300 rounded-lg focus:ring-slate-800 focus:border-slate-800"
               />
               <ArrowRight className="w-4 h-4 text-gray-400" />
@@ -220,9 +268,32 @@ const CustomRankingForm: FC<CustomRankingFormProps> = memo(
                 value={endDate}
                 onChange={(e) => setEndDate(e.target.value)}
                 required
-                // 修正: focus:ring-slate-500 -> focus:ring-slate-800
                 className="flex-1 p-2 border border-gray-300 rounded-lg focus:ring-slate-800 focus:border-slate-800"
               />
+            </div>
+            {/* プリセットボタン: 開始日を基準に終了日を設定 */}
+            <div className="flex space-x-2 flex-wrap gap-y-2">
+              <button
+                type="button"
+                onClick={() => setPreset(7)}
+                className="px-3 py-1 text-xs rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 transition"
+              >
+                1週間
+              </button>
+              <button
+                type="button"
+                onClick={() => setPreset(30)}
+                className="px-3 py-1 text-xs rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 transition"
+              >
+                1か月
+              </button>
+              <button
+                type="button"
+                onClick={() => setPreset(90)}
+                className="px-3 py-1 text-xs rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 transition"
+              >
+                3か月
+              </button>
             </div>
           </div>
 
@@ -238,7 +309,6 @@ const CustomRankingForm: FC<CustomRankingFormProps> = memo(
               id="targetClass"
               value={selectedClass}
               onChange={(e) => setSelectedClass(e.target.value)}
-              // 修正: focus:ring-slate-500 -> focus:ring-slate-800
               className="w-full p-2 border border-gray-300 rounded-lg focus:ring-slate-800 focus:border-slate-800"
             >
               {MOCK_CLASSES.map((cls: string) => (
@@ -256,8 +326,7 @@ const CustomRankingForm: FC<CustomRankingFormProps> = memo(
             className={`w-full py-3 rounded-xl text-lg font-semibold text-white transition duration-200 shadow-md ${
               isLoading
                 ? 'bg-gray-400 cursor-not-allowed'
-                : // 修正: bg-slate-600 -> bg-slate-800, hover:bg-slate-700 -> hover:bg-slate-900
-                  'bg-slate-800 hover:bg-slate-900 shadow-slate-300/50'
+                : 'bg-slate-800 hover:bg-slate-900 shadow-slate-300/50'
             }`}
           >
             {isLoading ? (
@@ -294,61 +363,81 @@ const RankingCard: FC<RankingCardProps> = memo(
 
     const isPeriodActive: boolean = endDate >= today;
 
+    // 自動更新かどうかでタイトルとアイコンを調整
+    const titlePrefix = ranking.isAutomatic
+      ? ranking.id.includes('weekly')
+        ? '【毎週】'
+        : '【毎月】'
+      : '【カスタム】';
+    const cardIcon = ranking.isAutomatic ? (
+      <Clock className="w-4 h-4 mr-1 text-slate-800" />
+    ) : (
+      <TrendingUp className="w-4 h-4 mr-1 text-slate-800" />
+    );
+    const targetLabel =
+      ranking.target === '全校生徒' ? '全校生徒' : ranking.target;
+
+    // カスタム期間のみ削除ボタンを表示
+    const showDelete = !ranking.isAutomatic;
+
+    // **自動ランキングの場合、期間ラベルを非表示にする**
+    const showPeriodLabel = !ranking.isAutomatic;
+
     return (
       <div
         className={`bg-white p-4 rounded-xl shadow-md border-2 cursor-pointer transition duration-150 ease-in-out
                   ${
                     isSelected
-                      ? // 修正: 選択時のボーダーとリングをslate-800ベースに変更
-                        'border-slate-800 ring-2 ring-slate-300'
+                      ? 'border-slate-800 ring-2 ring-slate-300'
                       : 'border-gray-200 hover:border-slate-400'
                   }`}
         onClick={() => onView(ranking)}
       >
         <div className="flex justify-between items-start mb-2">
           <h4 className="font-bold text-base text-gray-800 flex items-center">
-            {/* 修正: アイコンカラーをslate-600 -> slate-800 */}
-            <TrendingUp className="w-4 h-4 mr-1 text-slate-800" />
+            {cardIcon}
+            {/* タイトルは既に所定の形式で設定されているため、そのまま表示 */}
+            {titlePrefix}
             {ranking.title}
           </h4>
-          <span
-            className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
-              isPeriodActive
-                ? 'bg-green-200 text-green-800'
-                : 'bg-gray-300 text-gray-700'
-            }`}
-          >
-            {isPeriodActive ? '期間内' : '期間終了'}
-          </span>
+          {showPeriodLabel && (
+            <span
+              className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                isPeriodActive
+                  ? 'bg-green-200 text-green-800'
+                  : 'bg-gray-300 text-gray-700'
+              }`}
+            >
+              {isPeriodActive ? '期間内' : '期間終了'}
+            </span>
+          )}
         </div>
 
         <div className="text-sm text-gray-600 space-y-1 border-t pt-2 mt-2">
           <p className="flex items-center">
-            <Users className="w-3 h-3 mr-1 text-gray-500" /> 対象:{' '}
-            {ranking.target} (全{ranking.rankingData.length}名)
+            <Users className="w-3 h-3 mr-1 text-gray-500" /> 対象: {targetLabel}{' '}
+            (全{ranking.rankingData.length}名)
           </p>
           <p className="flex items-center">
             <Calendar className="w-3 h-3 mr-1 text-gray-500" /> 期間:{' '}
             {ranking.period}
           </p>
-          <p className="flex items-center">
-            <Clock className="w-3 h-3 mr-1 text-gray-500" /> 最終更新:{' '}
-            {ranking.lastUpdated.split(' ')[0]}
-          </p>
         </div>
 
-        <div className="mt-4 flex justify-end">
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete(ranking.id);
-            }}
-            className="p-2 rounded-lg text-red-500 hover:bg-red-100 transition"
-            title="ランキングを削除"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
-        </div>
+        {showDelete && (
+          <div className="mt-4 flex justify-end">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete(ranking.id);
+              }}
+              className="p-2 rounded-lg text-red-500 hover:bg-red-100 transition"
+              title="ランキングを削除"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          </div>
+        )}
       </div>
     );
   },
@@ -359,8 +448,17 @@ interface CurrentRankingDetailProps {
   ranking: RankingData | null;
 }
 
+const RANKING_TYPE_TABS: TabItem[] = [
+  { id: 'logic', label: 'Logic Training' },
+  { id: 'debate', label: 'Debate' },
+];
+
 const CurrentRankingDetail: FC<CurrentRankingDetailProps> = memo(
   ({ ranking }) => {
+    // 画面切り替え用の状態
+    const [currentViewType, setCurrentViewType] =
+      useState<RankingType>('logic');
+
     if (!ranking) {
       return (
         <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-200 h-full flex items-center justify-center text-gray-500 italic">
@@ -374,77 +472,113 @@ const CurrentRankingDetail: FC<CurrentRankingDetailProps> = memo(
     endDate.setHours(0, 0, 0, 0);
     const isPeriodActive: boolean = endDate >= today;
 
+    // 現在表示中の種別に基づいてソートされたデータ
+    const sortedRankingData = useMemo(() => {
+      // 常に現在のrankingDataを基にソートし、順位と表示スコアを計算
+      return [...ranking.rankingData]
+        .sort((a, b) => {
+          if (currentViewType === 'logic') {
+            return b.score - a.score;
+          }
+          return b.maxScore - a.maxScore;
+        })
+        .map((student, index) => ({
+          ...student,
+          // ランキング種別によって順位を再計算
+          rank: index + 1,
+          // 表示するスコアを決定
+          displayScore:
+            currentViewType === 'logic' ? student.score : student.maxScore,
+        }));
+    }, [ranking.rankingData, currentViewType]); // ranking.rankingDataが変更されたら再計算
+
+    const scoreLabel =
+      currentViewType === 'logic' ? '評価ポイント' : '最高スコア';
+    const targetLabel =
+      ranking.target === '全校生徒' ? '全校生徒' : ranking.target;
+
+    const titlePrefix = ranking.isAutomatic
+      ? ranking.id.includes('weekly')
+        ? '【毎週】'
+        : '【毎月】'
+      : '【カスタム】';
+
     return (
       <div className="bg-white p-6 rounded-xl shadow-lg border border-slate-200 h-full">
         <h3 className="text-xl font-bold text-gray-700 mb-3 flex items-center">
-          {/* 修正: アイコンカラーをslate-600 -> slate-800 */}
           <TrendingUp className="w-5 h-5 mr-2 text-slate-800" />
           ランキング詳細
         </h3>
 
         <div
           className={`p-4 rounded-lg mb-4 ${
-            isPeriodActive
+            isPeriodActive && !ranking.isAutomatic
               ? 'bg-green-50 border border-green-200'
               : 'bg-gray-100 border border-gray-300'
           }`}
         >
           <h4 className="font-bold text-lg text-slate-700 mb-1">
+            {titlePrefix}
             {ranking.title}
           </h4>
           <p className="flex items-center mt-1 text-xs font-medium">
-            <Users className="w-3 h-3 mr-1 text-gray-500" /> 対象:{' '}
-            {ranking.target} (全{ranking.rankingData.length}名)
+            <Users className="w-3 h-3 mr-1 text-gray-500" /> 対象: {targetLabel}{' '}
+            (全{ranking.rankingData.length}名)
           </p>
           <p className="flex items-center mt-1 text-xs font-medium">
             <Calendar className="w-3 h-3 mr-1 text-gray-500" /> 期間:{' '}
             {ranking.period}
           </p>
-          <p
-            className={`mt-1 text-xs font-medium ${
-              isPeriodActive ? 'text-green-600' : 'text-gray-600'
-            }`}
-          >
-            <Clock className="w-3 h-3 mr-1 inline-block" />
-            最終更新: {ranking.lastUpdated.split(' ')[0]}
-          </p>
         </div>
 
-        {/* ランキング詳細テーブル (全生徒表示) */}
-        <h4 className="font-bold text-gray-700 mb-3">
-          ランキングリスト (1位〜{ranking.rankingData.length}位)
-        </h4>
-        {/* 修正: リスト背景色を slate-50 -> slate-100、ボーダー/テキストをslate-800ベースに変更 */}
+        {/* ランキング種別切り替えタブ */}
+        <div className="mb-4 flex items-center justify-between">
+          <h4 className="font-bold text-gray-700">ランキングリスト</h4>
+          <SegmentedControl
+            tabs={RANKING_TYPE_TABS}
+            activeTab={currentViewType}
+            onTabChange={setCurrentViewType as (v: string) => void}
+          />
+        </div>
+
         <div className="bg-slate-100 px-3 rounded-lg max-h-80 overflow-y-auto shadow-inner">
           {/* ランキングヘッダー */}
-          <div className="flex text-xs font-bold text-slate-800 border-b border-slate-400 pb-2 mb-1 sticky top-0 bg-slate-100 z-10 pt-3">
-            <span className="w-12 text-center">順位</span>
-            <span className="w-16 text-center">クラス</span>
-            <span className="flex-1 ml-2">生徒名</span>
-            <span className="w-20 text-right">スコア</span>
+          <div className="grid grid-cols-[3rem_1fr_1fr_3rem_1fr_1fr] gap-2 text-xs font-bold text-slate-800 border-b border-slate-400 pb-2 mb-1 sticky top-0 bg-slate-100 z-10 pt-3">
+            <span className="text-center">順位</span>
+            <span className="text-left">名前</span>
+            <span className="text-left">ニックネーム</span>
+            <span className="text-center">学年</span>
+            <span className="text-center">クラス</span>
+            <span className="text-right">{scoreLabel}</span>
           </div>
 
           {/* ランキングリスト本体 (スクロール可能) */}
-          {ranking.rankingData.map((student: RankingStudentData) => (
+          {sortedRankingData.map((student) => (
             <div
               key={student.rank}
-              className="flex items-center py-1 hover:bg-slate-200 transition duration-100 rounded-sm"
+              className="grid grid-cols-[3rem_1fr_1fr_3rem_1fr_1fr] gap-2 items-center py-1 hover:bg-slate-200 transition duration-100 rounded-sm"
             >
               <span
-                className={`w-12 text-center font-bold text-sm ${
+                className={`text-center font-bold text-sm ${
                   student.rank <= 3 ? 'text-yellow-700' : 'text-gray-700'
                 }`}
               >
                 #{student.rank}
               </span>
-              <span className="w-16 text-xs text-center text-gray-500">
-                {student.class}
-              </span>
-              <span className="flex-1 ml-2 text-sm text-gray-700 truncate">
+              <span className="text-sm text-gray-700 truncate">
                 {student.name}
               </span>
-              <span className="w-20 text-right font-semibold text-sm text-slate-800">
-                {student.score.toLocaleString()}
+              <span className="text-sm text-gray-500 truncate">
+                {student.nickname}
+              </span>
+              <span className="text-center text-xs text-gray-500">
+                {student.grade}年
+              </span>
+              <span className="text-center text-xs text-gray-500">
+                {student.class}
+              </span>
+              <span className="text-right font-semibold text-sm text-slate-800">
+                {student.displayScore.toLocaleString()}
               </span>
             </div>
           ))}
@@ -456,29 +590,86 @@ const CurrentRankingDetail: FC<CurrentRankingDetailProps> = memo(
 
 // === メインコンポーネント: RankingSettings (TeacherLayoutに組み込む) ===
 export const RankingSettings = memo(() => {
-  // 複数のカスタムランキング状態を配列で保持 (ダミーデータで初期化)
-  const [customRankings, setCustomRankings] =
-    useState<RankingData[]>(initialRankings);
-  // 現在詳細表示しているランキング (最初のダミーデータを初期表示)
-  const [currentView, setCurrentView] = useState<RankingData | null>(
-    initialRankings[0] || null,
+  // 週間・月間ランキングの期間を計算
+  const weeklyPeriod = getWeeklyPeriod();
+  const monthlyPeriod = getMonthlyPeriod();
+
+  // デフォルトの自動ランキングデータ生成（Weekly/Monthly）
+  const getAutomaticRankings = useCallback(() => {
+    // 全校生徒のダミーデータ（集計対象が「全校生徒」であるため）
+    const allStudents = MOCK_CLASSES.flatMap((cls) =>
+      generateMockStudents(cls, STUDENT_COUNT / MOCK_CLASSES.length),
+    );
+
+    const weeklyLogic: RankingData = {
+      id: 'auto-weekly',
+      // **タイトル修正:** 【毎週】ランキング
+      title: 'ランキング',
+      period: weeklyPeriod.period,
+      target: '全校生徒',
+      rankingData: [...allStudents].sort((a, b) => b.score - a.score),
+      type: 'logic', // 自動更新ランキングは種別を持つ
+      isAutomatic: true,
+    };
+    // Monthly Debate
+    const monthlyDebate: RankingData = {
+      id: 'auto-monthly',
+      // **タイトル修正:** 【毎月】ランキング
+      title: 'ランキング',
+      period: monthlyPeriod.period,
+      target: '全校生徒',
+      rankingData: [...allStudents].sort((a, b) => b.maxScore - a.maxScore),
+      type: 'debate', // 自動更新ランキングは種別を持つ
+      isAutomatic: true,
+    };
+
+    return [weeklyLogic, monthlyDebate];
+  }, [monthlyPeriod.period, weeklyPeriod.period]);
+
+  // 既存のカスタムランキングデータ（初期値はisAutomatic: falseを設定）
+  const initialCustomRankings: RankingData[] = [
+    ...initialRankings.map((r) => ({ ...r, isAutomatic: false })),
+  ];
+
+  const [customRankings, setCustomRankings] = useState<RankingData[]>(
+    initialCustomRankings,
   );
 
-  // ランキングの追加または上書きロジック
+  // 自動ランキングとカスタムランキングを結合
+  const allRankings = useMemo(() => {
+    const auto = getAutomaticRankings();
+    return [...auto, ...customRankings];
+  }, [customRankings, getAutomaticRankings]);
+
+  // 現在詳細表示しているランキング (最初はWeekly Logicを初期表示)
+  const [currentView, setCurrentView] = useState<RankingData | null>(
+    allRankings.find((r) => r.id === 'auto-weekly') || allRankings[0] || null,
+  );
+
+  // currentViewがallRankingsに含まれていない場合（削除された場合など）をチェック
+  React.useEffect(() => {
+    if (currentView && !allRankings.find((r) => r.id === currentView.id)) {
+      setCurrentView(allRankings[0] || null);
+    }
+  }, [allRankings, currentView]);
+
+  // ランキングの追加または上書きロジック (カスタムランキングのみが対象)
   const addOrUpdateRanking = useCallback((newRanking: RankingData) => {
     setCustomRankings((prevRankings) => {
-      // 同じクラスのランキングがあるかチェック (クラス名で上書き対象を判断)
+      // 同じクラスのカスタムランキングがあるかチェック (カスタムは種別を持たないためクラス名のみ)
       const existingIndex = prevRankings.findIndex(
         (r) => r.target === newRanking.target,
       );
 
       if (existingIndex !== -1) {
-        // 既存のランキングを上書き (同じクラスを再集計した場合、前回は保持されない要件に対応)
+        // 既存のランキングを上書き
         const updatedRankings = [...prevRankings];
-        // ランキングIDを維持して上書き
         newRanking.id = updatedRankings[existingIndex].id;
+        // typeはカスタム期間では不要なので削除
+        delete newRanking.type;
         updatedRankings[existingIndex] = newRanking;
-        setCurrentView(newRanking);
+        // 現在表示中のランキングが上書きされたランキングだった場合、表示を更新
+        setCurrentView((v) => (v && v.id === newRanking.id ? newRanking : v));
         return updatedRankings;
       }
       // 新しいランキングとして追加
@@ -487,23 +678,14 @@ export const RankingSettings = memo(() => {
     });
   }, []);
 
-  // ランキング削除ロジック
-  const deleteRanking = useCallback(
-    (id: string) => {
-      setCustomRankings((prevRankings) => {
-        const filteredRankings = prevRankings.filter((r) => r.id !== id);
-        if (currentView?.id === id) {
-          // 削除したランキングが表示中の場合は、新しい先頭を表示するかクリアする
-          setCurrentView(
-            filteredRankings.length > 0 ? filteredRankings[0] : null,
-          );
-        }
-        return filteredRankings;
-      });
-      console.log(`ランキングID: ${id} が削除されました。`);
-    },
-    [currentView],
-  );
+  // ランキング削除ロジック (カスタムランキングのみが対象)
+  const deleteRanking = useCallback((id: string) => {
+    setCustomRankings((prevRankings) => {
+      const filteredRankings = prevRankings.filter((r) => r.id !== id);
+      return filteredRankings;
+    });
+    console.log(`ランキングID: ${id} が削除されました。`);
+  }, []);
 
   return (
     <TeacherLayout
@@ -511,7 +693,7 @@ export const RankingSettings = memo(() => {
       breadcrumbs={[{ label: 'ランキング設定', href: '/' }]}
     >
       {/* 外部Layoutのpaddingを打ち消し、全画面幅で背景色を設定するためのCSSを適用 */}
-      <div className="min-h-screen bg-gray-50 font-['Inter'] p-4 pb-6 sm:p-8 -m-4 sm:-m-8">
+      <div className="min-h-screen bg-gray-50 font-sans p-4 pb-6 sm:p-8 -m-4 sm:-m-8">
         <div className="max-w-7xl mx-auto">
           {/* UPPER SECTION: Form (Left) & Detail View (Right) */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-10">
@@ -526,11 +708,11 @@ export const RankingSettings = memo(() => {
           <section className="mt-8">
             <h3 className="text-xl font-bold text-gray-900 mb-4 border-b pb-2 flex items-center">
               <Clock className="w-5 h-5 mr-2 inline-block text-slate-800" />
-              作成済みランキング一覧
+              集計ランキング一覧
             </h3>
-            {customRankings.length > 0 ? (
+            {allRankings.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {customRankings.map((ranking) => (
+                {allRankings.map((ranking) => (
                   <RankingCard
                     key={ranking.id}
                     ranking={ranking}
@@ -542,7 +724,7 @@ export const RankingSettings = memo(() => {
               </div>
             ) : (
               <div className="text-center py-10 text-gray-500 italic bg-white rounded-xl shadow-lg border border-gray-200">
-                まだカスタムランキングがありません。フォームから新しいランキングを作成してください。
+                表示できるランキングがありません。カスタムランキングを作成してください。
               </div>
             )}
           </section>
