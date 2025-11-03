@@ -17,6 +17,7 @@ import {
   ArrowRight,
   Trash2,
   TrendingUp,
+  Zap,
 } from 'lucide-react';
 import React, { useState, FC, memo, useCallback, useMemo } from 'react';
 
@@ -38,6 +39,9 @@ interface RankingStudentData {
 /** ランキングの種別 (表示用フィルタ) */
 type RankingType = 'logic' | 'debate';
 
+/** フィルタータイプ */
+type FilterType = 'all' | 'grade' | 'class';
+
 /** 作成されたランキング全体の設定データ */
 interface RankingData {
   id: string; // ランキングを一意に識別するID
@@ -52,12 +56,13 @@ interface RankingData {
 
 /** SegmentedControlのタブアイテムの型 */
 interface TabItem {
-  id: RankingType;
+  id: string;
   label: string;
 }
 
 // === データモック ===
 const MOCK_CLASSES: string[] = ['1年A組', '1年B組', '2年A組', '2年C組'];
+const MOCK_GRADES: number[] = [1, 2, 3];
 const STUDENT_COUNT = 200; // 全生徒数（クラスのメンバー数として利用）
 
 // 日付ヘルパー
@@ -126,7 +131,7 @@ const generateMockStudents = (
       score, // Logic Training Point
       maxScore, // Debate Max Score
       class: className,
-      grade: 1,
+      grade: parseInt(className.charAt(0), 10), // クラス名の最初の文字から学年を取得
     });
   }
   // Logic Training Scoreでソート
@@ -170,7 +175,6 @@ const SegmentedControl: FC<{
       {tabs.map((tab) => (
         <button
           key={tab.id}
-          // SegmentedControlの利用箇所が複数あるため、tabIdはstringのままにして、利用側で型をキャストする
           onClick={() => onTabChange(tab.id)}
           className={`
             px-4 py-2 rounded-md transition-colors duration-200 text-sm whitespace-nowrap
@@ -347,7 +351,7 @@ const CustomRankingForm: FC<CustomRankingFormProps> = memo(
   },
 );
 
-// === コンポーネント: 個別ランキングカード表示 (下部グリッド用) ===
+// === コンポーネント: 個別ランキングカード表示 ===
 interface RankingCardProps {
   ranking: RankingData;
   onDelete: (id: string) => void;
@@ -448,16 +452,16 @@ interface CurrentRankingDetailProps {
   ranking: RankingData | null;
 }
 
-const RANKING_TYPE_TABS: TabItem[] = [
-  { id: 'logic', label: 'Logic Training' },
-  { id: 'debate', label: 'Debate' },
-];
-
 const CurrentRankingDetail: FC<CurrentRankingDetailProps> = memo(
   ({ ranking }) => {
     // 画面切り替え用の状態
     const [currentViewType, setCurrentViewType] =
       useState<RankingType>('logic');
+
+    // フィルター関連の状態（自動更新ランキングの場合のみ使用）
+    const [filterType, setFilterType] = useState<FilterType>('all');
+    const [selectedGrade, setSelectedGrade] = useState<number>(MOCK_GRADES[0]);
+    const [selectedClass, setSelectedClass] = useState<string>(MOCK_CLASSES[0]);
 
     if (!ranking) {
       return (
@@ -472,10 +476,34 @@ const CurrentRankingDetail: FC<CurrentRankingDetailProps> = memo(
     endDate.setHours(0, 0, 0, 0);
     const isPeriodActive: boolean = endDate >= today;
 
+    // フィルタリングされたデータを取得
+    const filteredData = useMemo(() => {
+      if (!ranking.isAutomatic) {
+        // カスタムランキングの場合はフィルタリングしない
+        return ranking.rankingData;
+      }
+
+      // 自動更新ランキングの場合のみフィルタリング
+      switch (filterType) {
+        case 'grade':
+          return ranking.rankingData.filter((s) => s.grade === selectedGrade);
+        case 'class':
+          return ranking.rankingData.filter((s) => s.class === selectedClass);
+        case 'all':
+        default:
+          return ranking.rankingData;
+      }
+    }, [
+      ranking.rankingData,
+      ranking.isAutomatic,
+      filterType,
+      selectedGrade,
+      selectedClass,
+    ]);
+
     // 現在表示中の種別に基づいてソートされたデータ
     const sortedRankingData = useMemo(() => {
-      // 常に現在のrankingDataを基にソートし、順位と表示スコアを計算
-      return [...ranking.rankingData]
+      return [...filteredData]
         .sort((a, b) => {
           if (currentViewType === 'logic') {
             return b.score - a.score;
@@ -490,12 +518,29 @@ const CurrentRankingDetail: FC<CurrentRankingDetailProps> = memo(
           displayScore:
             currentViewType === 'logic' ? student.score : student.maxScore,
         }));
-    }, [ranking.rankingData, currentViewType]); // ranking.rankingDataが変更されたら再計算
+    }, [filteredData, currentViewType]);
 
     const scoreLabel =
       currentViewType === 'logic' ? '評価ポイント' : '最高スコア';
-    const targetLabel =
-      ranking.target === '全校生徒' ? '全校生徒' : ranking.target;
+
+    // フィルター適用後の対象ラベル
+    const getTargetLabel = () => {
+      if (!ranking.isAutomatic) {
+        return ranking.target === '全校生徒' ? '全校生徒' : ranking.target;
+      }
+
+      switch (filterType) {
+        case 'grade':
+          return `${selectedGrade}年生`;
+        case 'class':
+          return selectedClass;
+        case 'all':
+        default:
+          return '全校生徒';
+      }
+    };
+
+    const targetLabel = getTargetLabel();
 
     const titlePrefix = ranking.isAutomatic
       ? ranking.id.includes('weekly')
@@ -523,7 +568,7 @@ const CurrentRankingDetail: FC<CurrentRankingDetailProps> = memo(
           </h4>
           <p className="flex items-center mt-1 text-xs font-medium">
             <Users className="w-3 h-3 mr-1 text-gray-500" /> 対象: {targetLabel}{' '}
-            (全{ranking.rankingData.length}名)
+            (全{sortedRankingData.length}名)
           </p>
           <p className="flex items-center mt-1 text-xs font-medium">
             <Calendar className="w-3 h-3 mr-1 text-gray-500" /> 期間:{' '}
@@ -531,15 +576,84 @@ const CurrentRankingDetail: FC<CurrentRankingDetailProps> = memo(
           </p>
         </div>
 
-        {/* ランキング種別切り替えタブ */}
-        <div className="mb-4 flex items-center justify-between">
-          <h4 className="font-bold text-gray-700">ランキングリスト</h4>
-          <SegmentedControl
-            tabs={RANKING_TYPE_TABS}
-            activeTab={currentViewType}
-            onTabChange={setCurrentViewType as (v: string) => void}
-          />
-        </div>
+        {/* 自動更新ランキングの場合のみフィルターとランキング種別タブを表示 */}
+        {ranking.isAutomatic && (
+          <div className="mb-4">
+            {/* 上段: 全体・学年・クラスタブ + 集計期間 */}
+            <div className="flex items-center justify-between mb-4">
+              <SegmentedControl
+                tabs={[
+                  { id: 'all', label: '全体' },
+                  { id: 'grade', label: '学年' },
+                  { id: 'class', label: 'クラス' },
+                ]}
+                activeTab={filterType}
+                onTabChange={(tabId) => setFilterType(tabId as FilterType)}
+              />
+
+              <div>
+                {/* 学年選択 */}
+                {filterType === 'grade' && (
+                  <select
+                    value={selectedGrade}
+                    onChange={(e) => setSelectedGrade(Number(e.target.value))}
+                    className="p-2 text-sm border border-gray-300 rounded-lg focus:ring-slate-800 focus:border-slate-800"
+                  >
+                    {MOCK_GRADES.map((grade) => (
+                      <option key={grade} value={grade}>
+                        {grade}年
+                      </option>
+                    ))}
+                  </select>
+                )}
+
+                {/* クラス選択 */}
+                {filterType === 'class' && (
+                  <select
+                    value={selectedClass}
+                    onChange={(e) => setSelectedClass(e.target.value)}
+                    className="p-2 text-sm border border-gray-300 rounded-lg focus:ring-slate-800 focus:border-slate-800"
+                  >
+                    {MOCK_CLASSES.map((cls) => (
+                      <option key={cls} value={cls}>
+                        {cls}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            </div>
+
+            {/* 下段: Logic Training / Debate タブ */}
+            <div className="mb-3">
+              <SegmentedControl
+                tabs={[
+                  { id: 'logic', label: 'Logic Training' },
+                  { id: 'debate', label: 'Debate' },
+                ]}
+                activeTab={currentViewType}
+                onTabChange={(tabId) =>
+                  setCurrentViewType(tabId as RankingType)
+                }
+              />
+            </div>
+          </div>
+        )}
+
+        {/* カスタムランキングの場合は従来通りのタブ表示 */}
+        {!ranking.isAutomatic && (
+          <div className="mb-4 flex items-center justify-between">
+            <h4 className="font-bold text-gray-700">ランキングリスト</h4>
+            <SegmentedControl
+              tabs={[
+                { id: 'logic', label: 'Logic Training' },
+                { id: 'debate', label: 'Debate' },
+              ]}
+              activeTab={currentViewType}
+              onTabChange={(tabId) => setCurrentViewType(tabId as RankingType)}
+            />
+          </div>
+        )}
 
         <div className="bg-slate-100 px-3 rounded-lg max-h-80 overflow-y-auto shadow-inner">
           {/* ランキングヘッダー */}
@@ -555,7 +669,7 @@ const CurrentRankingDetail: FC<CurrentRankingDetailProps> = memo(
           {/* ランキングリスト本体 (スクロール可能) */}
           {sortedRankingData.map((student) => (
             <div
-              key={student.rank}
+              key={`${student.name}-${student.rank}`}
               className="grid grid-cols-[3rem_1fr_1fr_3rem_1fr_1fr] gap-2 items-center py-1 hover:bg-slate-200 transition duration-100 rounded-sm"
             >
               <span
@@ -635,23 +749,28 @@ export const RankingSettings = memo(() => {
     initialCustomRankings,
   );
 
-  // 自動ランキングとカスタムランキングを結合
-  const allRankings = useMemo(() => {
-    const auto = getAutomaticRankings();
-    return [...auto, ...customRankings];
-  }, [customRankings, getAutomaticRankings]);
+  // 自動ランキングを取得
+  const automaticRankings = useMemo(
+    () => getAutomaticRankings(),
+    [getAutomaticRankings],
+  );
 
   // 現在詳細表示しているランキング (最初はWeekly Logicを初期表示)
   const [currentView, setCurrentView] = useState<RankingData | null>(
-    allRankings.find((r) => r.id === 'auto-weekly') || allRankings[0] || null,
+    automaticRankings.find((r) => r.id === 'auto-weekly') ||
+      automaticRankings[0] ||
+      null,
   );
 
-  // currentViewがallRankingsに含まれていない場合（削除された場合など）をチェック
+  // currentViewが削除された場合の処理
   React.useEffect(() => {
-    if (currentView && !allRankings.find((r) => r.id === currentView.id)) {
-      setCurrentView(allRankings[0] || null);
+    if (currentView) {
+      const allRankings = [...automaticRankings, ...customRankings];
+      if (!allRankings.find((r) => r.id === currentView.id)) {
+        setCurrentView(allRankings[0] || null);
+      }
     }
-  }, [allRankings, currentView]);
+  }, [automaticRankings, customRankings, currentView]);
 
   // ランキングの追加または上書きロジック (カスタムランキングのみが対象)
   const addOrUpdateRanking = useCallback((newRanking: RankingData) => {
@@ -704,15 +823,37 @@ export const RankingSettings = memo(() => {
             <CurrentRankingDetail ranking={currentView} />
           </div>
 
-          {/* LOWER SECTION: Created Rankings Card Grid (3 Columns) */}
+          {/* AUTOMATIC RANKINGS SECTION: Weekly & Monthly Rankings */}
+          <section className="mt-8 mb-10">
+            <h3 className="text-xl font-bold text-gray-900 mb-4 border-b pb-2 flex items-center">
+              <Zap className="w-5 h-5 mr-2 inline-block text-amber-600" />
+              自動更新ランキング
+            </h3>
+            <p className="text-sm text-gray-600 mb-4">
+              以下のランキングは自動で更新されます。集計ボタンを押す必要はありません。
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {automaticRankings.map((ranking) => (
+                <RankingCard
+                  key={ranking.id}
+                  ranking={ranking}
+                  onDelete={deleteRanking}
+                  onView={setCurrentView}
+                  isSelected={currentView?.id === ranking.id}
+                />
+              ))}
+            </div>
+          </section>
+
+          {/* CUSTOM RANKINGS SECTION */}
           <section className="mt-8">
             <h3 className="text-xl font-bold text-gray-900 mb-4 border-b pb-2 flex items-center">
               <Clock className="w-5 h-5 mr-2 inline-block text-slate-800" />
-              集計ランキング一覧
+              カスタム期間ランキング一覧
             </h3>
-            {allRankings.length > 0 ? (
+            {customRankings.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {allRankings.map((ranking) => (
+                {customRankings.map((ranking) => (
                   <RankingCard
                     key={ranking.id}
                     ranking={ranking}
@@ -724,7 +865,7 @@ export const RankingSettings = memo(() => {
               </div>
             ) : (
               <div className="text-center py-10 text-gray-500 italic bg-white rounded-xl shadow-lg border border-gray-200">
-                表示できるランキングがありません。カスタムランキングを作成してください。
+                カスタムランキングがまだありません。上のフォームから作成してください。
               </div>
             )}
           </section>
