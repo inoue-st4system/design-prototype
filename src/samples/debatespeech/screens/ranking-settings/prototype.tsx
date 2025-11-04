@@ -11,13 +11,15 @@
 /* eslint-disable react/no-array-index-key */
 import {
   RefreshCw,
-  Calendar,
   Clock,
   Users,
   ArrowRight,
   Trash2,
-  TrendingUp,
-  Zap,
+  Trophy,
+  CalendarPlus,
+  Calendar,
+  CalendarRange,
+  CalendarDays,
 } from 'lucide-react';
 import React, { useState, FC, memo, useCallback, useMemo } from 'react';
 
@@ -177,7 +179,7 @@ const SegmentedControl: FC<{
           key={tab.id}
           onClick={() => onTabChange(tab.id)}
           className={`
-            px-4 py-2 rounded-md transition-colors duration-200 text-sm whitespace-nowrap
+            w-full px-4 py-2 rounded-md transition-colors duration-200 text-sm whitespace-nowrap
             ${
               activeTab === tab.id
                 ? activeClasses
@@ -249,7 +251,7 @@ const CustomRankingForm: FC<CustomRankingFormProps> = memo(
     return (
       <div className="bg-white p-6 rounded-xl shadow-lg border border-slate-100 h-full">
         <h3 className="text-xl font-bold text-slate-700 mb-4 flex items-center">
-          <Calendar className="w-5 h-5 mr-2 text-slate-800" />
+          <CalendarPlus className="w-5 h-5 mr-2 text-slate-800" />
           カスタム期間ランキングの作成・更新
         </h3>
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -373,11 +375,7 @@ const RankingCard: FC<RankingCardProps> = memo(
         ? '【毎週】'
         : '【毎月】'
       : '【カスタム】';
-    const cardIcon = ranking.isAutomatic ? (
-      <Clock className="w-4 h-4 mr-1 text-slate-800" />
-    ) : (
-      <TrendingUp className="w-4 h-4 mr-1 text-slate-800" />
-    );
+
     const targetLabel =
       ranking.target === '全校生徒' ? '全校生徒' : ranking.target;
 
@@ -399,8 +397,6 @@ const RankingCard: FC<RankingCardProps> = memo(
       >
         <div className="flex justify-between items-start mb-2">
           <h4 className="font-bold text-base text-gray-800 flex items-center">
-            {cardIcon}
-            {/* タイトルは既に所定の形式で設定されているため、そのまま表示 */}
             {titlePrefix}
             {ranking.title}
           </h4>
@@ -551,7 +547,7 @@ const CurrentRankingDetail: FC<CurrentRankingDetailProps> = memo(
     return (
       <div className="bg-white p-6 rounded-xl shadow-lg border border-slate-200 h-full">
         <h3 className="text-xl font-bold text-gray-700 mb-3 flex items-center">
-          <TrendingUp className="w-5 h-5 mr-2 text-slate-800" />
+          <Trophy className="w-5 h-5 mr-2 text-slate-800" />
           ランキング詳細
         </h3>
 
@@ -642,8 +638,7 @@ const CurrentRankingDetail: FC<CurrentRankingDetailProps> = memo(
 
         {/* カスタムランキングの場合は従来通りのタブ表示 */}
         {!ranking.isAutomatic && (
-          <div className="mb-4 flex items-center justify-between">
-            <h4 className="font-bold text-gray-700">ランキングリスト</h4>
+          <div className="mb-4">
             <SegmentedControl
               tabs={[
                 { id: 'logic', label: 'Logic Training' },
@@ -823,15 +818,20 @@ export const RankingSettings = memo(() => {
             <CurrentRankingDetail ranking={currentView} />
           </div>
 
-          {/* AUTOMATIC RANKINGS SECTION: Weekly & Monthly Rankings */}
+          {/* ＜別のラベル候補＞
+            - 固定期間ランキング
+            - 標準ランキング
+            - デフォルトランキング
+            - 定型ランキング
+            - 週次・月次ランキング
+            - プリセットランキング
+            - 定期集計ランキング
+          */}
           <section className="mt-8 mb-10">
             <h3 className="text-xl font-bold text-gray-900 mb-4 border-b pb-2 flex items-center">
-              <Zap className="w-5 h-5 mr-2 inline-block text-amber-600" />
-              自動更新ランキング
+              <Calendar className="w-5 h-5 mr-2 inline-block" />
+              定期ランキング
             </h3>
-            <p className="text-sm text-gray-600 mb-4">
-              以下のランキングは自動で更新されます。集計ボタンを押す必要はありません。
-            </p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {automaticRankings.map((ranking) => (
                 <RankingCard
@@ -848,8 +848,8 @@ export const RankingSettings = memo(() => {
           {/* CUSTOM RANKINGS SECTION */}
           <section className="mt-8">
             <h3 className="text-xl font-bold text-gray-900 mb-4 border-b pb-2 flex items-center">
-              <Clock className="w-5 h-5 mr-2 inline-block text-slate-800" />
-              カスタム期間ランキング一覧
+              <CalendarDays className="w-5 h-5 mr-2 inline-block text-slate-800" />
+              カスタム期間ランキング
             </h3>
             {customRankings.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
